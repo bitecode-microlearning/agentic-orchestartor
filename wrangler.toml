@@ -1,0 +1,39 @@
+name = "bitecode-agentic-orchestrator"
+main = "src/index.ts"
+compatibility_date = "2026-07-04"
+compatibility_flags = [ "nodejs_compat" ]
+
+[vars]
+ENVIRONMENT = "development"
+ADMIN_API_TOKEN = "local-dev-token"
+ATLASSIAN_BASE_URL = "https://example.atlassian.net"
+ATLASSIAN_EMAIL = "ops@example.com"
+ATLASSIAN_API_TOKEN = "placeholder"
+JIRA_PROJECT_KEY = "BC"
+CONFLUENCE_SPACE_KEY = "BITE"
+CONFLUENCE_DEFAULT_PARENT_PAGE_ID = "0"
+
+[[d1_databases]]
+binding = "AGENT_DB"
+database_name = "bitecode-agents-prod"
+database_id = "cdc915cf-4286-459a-bff3-af61d628c7b0"
+
+[[r2_buckets]]
+binding = "AI_AUDIT_BUCKET"
+bucket_name = "ai-audit-bucket"
+
+[env.production]
+name = "bitecode-agentic-orchestrator-prod"
+
+[env.production.vars]
+ENVIRONMENT = "production"
+ADMIN_API_TOKEN = "set-me-in-cloudflare-secrets"
+
+[[env.production.d1_databases]]
+binding = "AGENT_DB"
+database_name = "bitecode-agents-prod"
+database_id = "cdc915cf-4286-459a-bff3-af61d628c7b0"
+
+[[env.production.r2_buckets]]
+binding = "AI_AUDIT_BUCKET"
+bucket_name = "ai-audit-bucket"

@@ -1,0 +1,20 @@
+{
+  "name": "bitecode-agentic-orchestrator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev": "wrangler dev --local --port 8790"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240620.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.101.0"
+  }
+}
