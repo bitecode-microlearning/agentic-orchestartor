@@ -78,7 +78,7 @@ export async function runWeeklyReview(
       requestId,
       runId,
       status: 'blocked',
-      policy: policyDecision,
+      policy: { ...policyDecision },
       audit: sanitizedAudit,
     };
   }

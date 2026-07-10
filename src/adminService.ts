@@ -18,6 +18,7 @@ import {
 } from './adminDb';
 import { generateAgentChatReply } from './chat';
 import { listLogs, listRuns } from './db';
+import { checkJiraIssueStatus, formatJiraCheckReply, type JiraToolAuth } from './tools/jira';
 import type { TelegramUpdate } from './telegram';
 import { sendTelegramMessage } from './telegram';
 import { runWeeklyReview } from './agentService';
@@ -29,6 +30,10 @@ export interface AdminServiceEnv {
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_ADMIN_CHAT_IDS?: string;
+  ATLASSIAN_BASE_URL?: string;
+  ATLASSIAN_EMAIL?: string;
+  ATLASSIAN_API_TOKEN?: string;
+  JIRA_PROJECT_KEY?: string;
   ENVIRONMENT?: string;
   AGENT_DB: D1Database;
   ADMIN_DB: D1Database;
@@ -43,7 +48,7 @@ function json(data: unknown, status = 200): Response {
 
 function html(content: string): Response {
   return new Response(content, {
-    status,
+    status: 200,
     headers: { 'content-type': 'text/html; charset=utf-8' },
   });
 }
@@ -72,6 +77,55 @@ function parseAllowedTelegramChatIds(csv?: string): Set<string> {
     .map((x) => x.trim())
     .filter(Boolean);
   return new Set(values);
+}
+
+function buildJiraAuth(env: AdminServiceEnv): JiraToolAuth | null {
+  if (!env.ATLASSIAN_BASE_URL || !env.ATLASSIAN_EMAIL || !env.ATLASSIAN_API_TOKEN || !env.JIRA_PROJECT_KEY) {
+    return null;
+  }
+
+  return {
+    baseUrl: env.ATLASSIAN_BASE_URL,
+    email: env.ATLASSIAN_EMAIL,
+    apiToken: env.ATLASSIAN_API_TOKEN,
+    projectKey: env.JIRA_PROJECT_KEY,
+  };
+}
+
+function parseJiraCheckQuery(message: string): string | undefined {
+  const trimmed = message.trim();
+  if (!trimmed.toLowerCase().startsWith('/jiracheck')) {
+    return undefined;
+  }
+
+  const rest = trimmed.slice('/jiracheck'.length).trim();
+  return rest || undefined;
+}
+
+async function buildJiraCheckResponse(env: AdminServiceEnv, query: string): Promise<{ response: string; metadata: Record<string, unknown> }> {
+  const jiraAuth = buildJiraAuth(env);
+  if (!jiraAuth) {
+    return {
+      response: 'Jira is not configured yet. Set ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN, and JIRA_PROJECT_KEY.',
+      metadata: { configured: false, query },
+    };
+  }
+
+  const result = await checkJiraIssueStatus(jiraAuth, query);
+  return {
+    response: formatJiraCheckReply(result),
+    metadata: {
+      configured: true,
+      query,
+      result: 'needsInput' in result
+        ? { needsInput: true }
+        : {
+            matchedKey: result.matchedKey,
+            confidence: result.confidence,
+            status: result.issue.status,
+          },
+    },
+  };
 }
 
 export async function handleAdminRoutes(request: Request, env: AdminServiceEnv): Promise<Response | null> {
@@ -214,6 +268,29 @@ export async function handleAdminRoutes(request: Request, env: AdminServiceEnv):
       return json({ ok: false, error: 'message is required' }, 400);
     }
 
+    const jiraQuery = parseJiraCheckQuery(message);
+    if (jiraQuery !== undefined) {
+      const { response: responseText, metadata } = await buildJiraCheckResponse(env, jiraQuery);
+
+      await insertAdminChatMessage(env.ADMIN_DB, {
+        channel: 'web',
+        actorEmail: auth.email,
+        message,
+        response: responseText,
+      });
+
+      await insertAdminAuditLog(env.ADMIN_DB, {
+        actorEmail: auth.email,
+        action: 'admin.jiracheck.sent',
+        targetType: 'jira_issues',
+        targetId: 'jiracheck',
+        metadataJson: JSON.stringify(metadata),
+      });
+
+      const messages = await listAdminChatMessages(env.ADMIN_DB, 50);
+      return json({ ok: true, response: responseText, jira: metadata, messages });
+    }
+
     const reply = generateAgentChatReply(message);
 
     await insertAdminChatMessage(env.ADMIN_DB, {
@@ -286,13 +363,16 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     return json({ ok: false, error: 'Chat ID not allowed' }, 403);
   }
 
-  const reply = generateAgentChatReply(messageText);
+  const jiraQuery = parseJiraCheckQuery(messageText);
+  const replyText = jiraQuery !== undefined
+    ? (await buildJiraCheckResponse(env, jiraQuery)).response
+    : generateAgentChatReply(messageText).response;
 
   await insertAdminChatMessage(env.ADMIN_DB, {
     channel: 'telegram',
     actorEmail: `telegram:${chatId}`,
     message: messageText,
-    response: reply.response,
+      response: replyText,
   });
 
   await insertAdminAuditLog(env.ADMIN_DB, {
@@ -300,11 +380,11 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     action: 'telegram.chat.received',
     targetType: 'admin_chat_messages',
     targetId: createRequestId('telegram-chat-event'),
-    metadataJson: JSON.stringify({ tags: reply.tags }),
+    metadataJson: JSON.stringify({ command: jiraQuery ? '/jiracheck' : null }),
   });
 
   if (env.TELEGRAM_BOT_TOKEN) {
-    await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, reply.response);
+    await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, replyText);
   }
 
   return json({ ok: true });

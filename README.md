@@ -51,6 +51,7 @@ Set sensitive values as Worker secrets (not plain vars):
 - Admin audit API: /api/admin/v1/audit
 - Admin commands API: /api/admin/v1/commands
 - Agent web chat API: /api/admin/v1/chat
+- Jira status command: /jiracheck <ticket key or task description>
 
 The admin routes require authentication. The implementation supports:
 - Cloudflare Access identity via cf-access-authenticated-user-email (preferred)
@@ -74,6 +75,19 @@ Required secret/vars:
 - TELEGRAM_ADMIN_CHAT_IDS (optional comma-separated chat ID allowlist)
 
 Telegram updates are stored in ADMIN_DB chat logs and answered with a safe non-destructive placeholder agent response.
+
+### Jira status lookup
+The `/jiracheck` command looks for either:
+- A ticket key like `BITE-123`
+- A short free-text description like `cloudflare migration`
+
+It then ranks Jira issues by similarity, returns a one-sentence summary, the latest status, and one extra sentence from the latest comment or linked Confluence page when available.
+
+Set these Atlassian values for Jira lookups:
+- ATLASSIAN_BASE_URL
+- ATLASSIAN_EMAIL
+- ATLASSIAN_API_TOKEN
+- JIRA_PROJECT_KEY
 
 ## Required resources
 - D1 database binding AGENT_DB
