@@ -3,6 +3,7 @@ import { ADMIN_WEBAPP_HTML } from './adminWebApp';
 import { createRequestId } from './lib';
 import {
   ensureAdminSchema,
+  hasTelegramUpdateBeenProcessed,
   insertAdminAuditLog,
   insertAdminChatMessage,
   insertAdminCommand,
@@ -10,6 +11,7 @@ import {
   listAdminChatMessages,
   listAdminCommands,
   listAdminUsers,
+  markTelegramUpdateProcessed,
   recordAdminSession,
   updateAdminCommandStatus,
   upsertAdminUserOnLogin,
@@ -254,11 +256,21 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
   }
 
   const update = (await request.json().catch(() => ({}))) as TelegramUpdate;
+  const updateId = update.update_id;
   const messageText = update.message?.text?.trim() ?? '';
   const chatId = update.message?.chat?.id;
+  const messageId = update.message?.message_id;
 
   if (!chatId) {
     return json({ ok: true, ignored: true, reason: 'No chat id in update' });
+  }
+
+  if (typeof updateId === 'number') {
+    const processed = await hasTelegramUpdateBeenProcessed(env.ADMIN_DB, updateId);
+    if (processed) {
+      return json({ ok: true, ignored: true, reason: 'Duplicate update ignored' });
+    }
+    await markTelegramUpdateProcessed(env.ADMIN_DB, updateId, String(chatId), messageId);
   }
 
   const allowedChatIds = parseAllowedTelegramChatIds(env.TELEGRAM_ADMIN_CHAT_IDS);

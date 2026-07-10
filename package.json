@@ -6,7 +6,13 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "dev": "wrangler dev --local --port 8790"
+    "dev": "wrangler dev --local --port 8790",
+    "deploy": "wrangler deploy --keep-vars",
+    "deploy:dev": "wrangler deploy --env development --keep-vars",
+    "deploy:prod": "wrangler deploy --env production --keep-vars",
+    "deploy:keepsecrets": "wrangler deploy --keep-vars",
+    "deploy:dev:keepsecrets": "wrangler deploy --env development --keep-vars",
+    "deploy:prod:keepsecrets": "wrangler deploy --env production --keep-vars"
   },
   "dependencies": {
     "zod": "^3.23.8"

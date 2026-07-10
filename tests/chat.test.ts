@@ -8,8 +8,10 @@ describe('agent chat reply', () => {
   });
 
   it('returns safe placeholder response for normal input', () => {
-    const result = generateAgentChatReply('Can you summarize today run?');
+    const input = 'Can you summarize today run?';
+    const result = generateAgentChatReply(input);
     expect(result.response).toContain('Destructive actions still require explicit human approval.');
+    expect(result.response).not.toContain(input);
     expect(result.tags).toContain('approval.first');
   });
 });

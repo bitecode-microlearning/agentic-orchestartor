@@ -12,9 +12,20 @@ export function generateAgentChatReply(message: string): AgentChatResult {
     };
   }
 
+  const intentHint =
+    trimmed.length > 100
+      ? 'long-form request'
+      : trimmed.toLowerCase().includes('weekly')
+        ? 'weekly review request'
+        : trimmed.toLowerCase().includes('jira')
+          ? 'jira planning request'
+          : trimmed.toLowerCase().includes('log')
+            ? 'log investigation request'
+            : 'general admin request';
+
   return {
     response:
-      `Acknowledged: ${trimmed}\n\n` +
+      `Got it. I identified this as a ${intentHint}.\n\n` +
       'I can help summarize current orchestrator state, suggest Jira tasks, and draft Confluence updates. ' +
       'Destructive actions still require explicit human approval.',
     tags: ['chat.reply', 'approval.first'],

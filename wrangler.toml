@@ -36,10 +36,8 @@ name = "bitecode-agentic-orchestrator-prod"
 
 [env.production.vars]
 ENVIRONMENT = "production"
-AGENTIC_ADMIN_TOKEN = "set-me-in-cloudflare-secrets"
 ALLOWED_GOOGLE_DOMAIN = "gmail.com"
 ADMIN_EMAIL_ALLOWLIST = ""
-TELEGRAM_WEBHOOK_SECRET = "set-me-in-cloudflare-secrets"
 TELEGRAM_ADMIN_CHAT_IDS = ""
 
 [[env.production.d1_databases]]

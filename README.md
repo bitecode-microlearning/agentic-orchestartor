@@ -27,6 +27,21 @@ This repository contains a safe, Cloudflare-native scaffold for an agentic orche
 - npm test
 - npm run dev
 
+## Safe deployment commands
+All deploy scripts use `--keep-vars` to avoid overwriting dashboard-configured runtime values.
+
+- npm run deploy
+- npm run deploy:dev
+- npm run deploy:prod
+- npm run deploy:keepsecrets
+- npm run deploy:dev:keepsecrets
+- npm run deploy:prod:keepsecrets
+
+Set sensitive values as Worker secrets (not plain vars):
+- npx.cmd wrangler secret put AGENTIC_ADMIN_TOKEN --env production
+- npx.cmd wrangler secret put TELEGRAM_BOT_TOKEN --env production
+- npx.cmd wrangler secret put TELEGRAM_WEBHOOK_SECRET --env production
+
 ## Admin website
 - Admin UI path: /admin
 - Identity API: /api/admin/v1/me
