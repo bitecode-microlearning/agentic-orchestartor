@@ -188,26 +188,27 @@ export async function listAdminChatMessages(db: D1Database, limit = 200): Promis
     .bind(limit)
     .all<AdminChatRecord>();
 
-    export async function hasTelegramUpdateBeenProcessed(db: D1Database, updateId: number): Promise<boolean> {
-      const result = await db
-        .prepare('SELECT update_id as updateId FROM telegram_webhook_events WHERE update_id = ?1 LIMIT 1')
-        .bind(updateId)
-        .first<TelegramWebhookEventRecord>();
-
-      return Boolean(result);
-    }
-
-    export async function markTelegramUpdateProcessed(
-      db: D1Database,
-      updateId: number,
-      chatId: string,
-      messageId?: number,
-    ): Promise<void> {
-      const now = new Date().toISOString();
-      await db
-        .prepare('INSERT OR IGNORE INTO telegram_webhook_events (update_id, chat_id, message_id, created_at) VALUES (?1, ?2, ?3, ?4)')
-        .bind(updateId, chatId, messageId ?? null, now)
-        .run();
-    }
   return result.results ?? [];
+}
+
+export async function hasTelegramUpdateBeenProcessed(db: D1Database, updateId: number): Promise<boolean> {
+  const result = await db
+    .prepare('SELECT update_id as updateId FROM telegram_webhook_events WHERE update_id = ?1 LIMIT 1')
+    .bind(updateId)
+    .first<TelegramWebhookEventRecord>();
+
+  return Boolean(result);
+}
+
+export async function markTelegramUpdateProcessed(
+  db: D1Database,
+  updateId: number,
+  chatId: string,
+  messageId?: number,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db
+    .prepare('INSERT OR IGNORE INTO telegram_webhook_events (update_id, chat_id, message_id, created_at) VALUES (?1, ?2, ?3, ?4)')
+    .bind(updateId, chatId, messageId ?? null, now)
+    .run();
 }
