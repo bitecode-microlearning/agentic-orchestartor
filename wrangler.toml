@@ -15,11 +15,17 @@ JIRA_PROJECT_KEY = "BC"
 CONFLUENCE_SPACE_KEY = "BITE"
 CONFLUENCE_DEFAULT_PARENT_PAGE_ID = "0"
 TELEGRAM_WEBHOOK_SECRET = "set-local-telegram-webhook-secret"
+TELEGRAM_ADMIN_CHAT_IDS = ""
 
 [[d1_databases]]
 binding = "AGENT_DB"
 database_name = "bitecode-agents-prod"
 database_id = "cdc915cf-4286-459a-bff3-af61d628c7b0"
+
+[[d1_databases]]
+binding = "ADMIN_DB"
+database_name = "bitecode-admin-prod"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 [[r2_buckets]]
 binding = "AI_AUDIT_BUCKET"
@@ -34,11 +40,17 @@ AGENTIC_ADMIN_TOKEN = "set-me-in-cloudflare-secrets"
 ALLOWED_GOOGLE_DOMAIN = "gmail.com"
 ADMIN_EMAIL_ALLOWLIST = ""
 TELEGRAM_WEBHOOK_SECRET = "set-me-in-cloudflare-secrets"
+TELEGRAM_ADMIN_CHAT_IDS = ""
 
 [[env.production.d1_databases]]
 binding = "AGENT_DB"
 database_name = "bitecode-agents-prod"
 database_id = "cdc915cf-4286-459a-bff3-af61d628c7b0"
+
+[[env.production.d1_databases]]
+binding = "ADMIN_DB"
+database_name = "bitecode-admin-prod"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 [[env.production.r2_buckets]]
 binding = "AI_AUDIT_BUCKET"

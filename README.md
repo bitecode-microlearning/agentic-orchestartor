@@ -13,6 +13,9 @@ This repository contains a safe, Cloudflare-native scaffold for an agentic orche
 
 ## Architecture overview
 - Worker entrypoint: src/index.ts
+- Admin backend services: src/admin-backend and src/adminService.ts
+- Admin web app: src/admin-webapp and src/adminWebApp.ts
+- Admin database schema: src/admin-db/schema.sql
 - Contracts and policies: src/contracts and src/policies
 - Tool wrappers: src/tools
 - Specialist agents: src/agents
@@ -26,9 +29,13 @@ This repository contains a safe, Cloudflare-native scaffold for an agentic orche
 
 ## Admin website
 - Admin UI path: /admin
-- Job list API: /api/admin/jobs
-- Logs API: /api/admin/logs
-- Agent web chat API: /api/admin/chat
+- Identity API: /api/admin/v1/me
+- Job list API: /api/admin/v1/jobs
+- Logs API: /api/admin/v1/logs
+- Admin users API: /api/admin/v1/users
+- Admin audit API: /api/admin/v1/audit
+- Admin commands API: /api/admin/v1/commands
+- Agent web chat API: /api/admin/v1/chat
 
 The admin routes require authentication. The implementation supports:
 - Cloudflare Access identity via cf-access-authenticated-user-email (preferred)
@@ -49,11 +56,13 @@ Webhook endpoint:
 Required secret/vars:
 - TELEGRAM_BOT_TOKEN (Wrangler secret)
 - TELEGRAM_WEBHOOK_SECRET (Wrangler var/secret)
+- TELEGRAM_ADMIN_CHAT_IDS (optional comma-separated chat ID allowlist)
 
-Telegram updates are stored as chat logs and answered with a safe non-destructive placeholder agent response.
+Telegram updates are stored in ADMIN_DB chat logs and answered with a safe non-destructive placeholder agent response.
 
 ## Required resources
 - D1 database binding AGENT_DB
+- D1 database binding ADMIN_DB
 - R2 bucket binding AI_AUDIT_BUCKET
 - Optional queue binding SYSTEM_EVENTS_QUEUE
 
@@ -62,9 +71,18 @@ Telegram updates are stored as chat logs and answered with a safe non-destructiv
 - Destructive actions require an approval request and are blocked by default.
 
 ## Production notes
-- AGENT_DB is used for run records, logs, and chat message persistence.
+- AGENT_DB is used only for agent workflow run records and logs.
+- ADMIN_DB is used for admin users, sessions, audit logs, admin commands, and admin chat messages.
+- Agent workflows do not write to ADMIN_DB.
 - The worker auto-creates required D1 tables if they are missing.
 - For production, prefer Wrangler secrets for AGENTIC_ADMIN_TOKEN and TELEGRAM_BOT_TOKEN.
+
+### Create and bind separate admin database
+Use Wrangler to create the admin control database and then update wrangler.toml with the returned database_id:
+
+- npx.cmd wrangler d1 create bitecode-admin-prod
+
+After creation, replace ADMIN_DB database_id placeholders in both default and production bindings.
 
 ## Future roadmap
 - Phase 1: orchestrator, weekly review workflow, Jira/Confluence wrappers, D1 logging, R2 audit references
