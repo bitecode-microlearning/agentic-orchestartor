@@ -35,6 +35,19 @@ export interface JiraCheckResult {
 
 export type JiraCheckOutcome = JiraCheckResult | { needsInput: true; prompt: string };
 
+export interface JiraStatusListItem {
+  key: string;
+  summary: string;
+  status: string;
+  updated?: string;
+  url: string;
+}
+
+export interface JiraStatusListResult {
+  requestedStatus: string;
+  issues: JiraStatusListItem[];
+}
+
 export interface JiraIssuePayload {
   title: string;
   description: string;
@@ -122,6 +135,10 @@ function toBase64(value: string): string {
 
 function buildAuthHeader(email: string, apiToken: string): string {
   return `Basic ${toBase64(`${email}:${apiToken}`)}`;
+}
+
+function escapeJqlValue(value: string): string {
+  return value.replace(/"/g, '\\"');
 }
 
 async function fetchJson<T>(url: string, auth: JiraToolAuth, timeoutMs = 8000): Promise<T> {
@@ -360,6 +377,47 @@ export async function checkJiraIssueStatus(auth: JiraToolAuth, query: string): P
       prompt: `Jira lookup failed or timed out (${message}). Try the ticket key again, or verify the Atlassian connection.`,
     };
   }
+}
+
+export async function listJiraIssuesByStatus(auth: JiraToolAuth, requestedStatus: string, maxResults = 10): Promise<JiraStatusListResult> {
+  const normalizedStatus = requestedStatus.trim();
+  if (!normalizedStatus) {
+    return { requestedStatus, issues: [] };
+  }
+
+  const boundedMax = Math.max(1, Math.min(20, Math.trunc(maxResults)));
+  const openLike = normalizedStatus.toLowerCase();
+  const statusFilter = openLike === 'open'
+    ? 'statusCategory != Done'
+    : `status = "${escapeJqlValue(normalizedStatus)}"`;
+  const jql = `project = ${auth.projectKey} AND ${statusFilter} ORDER BY updated DESC`;
+  const searchUrl = `${auth.baseUrl}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=${boundedMax}&fields=summary,status,updated`;
+
+  const data = await fetchJson<{ issues?: JiraSearchResultIssue[] }>(searchUrl, auth, 8000);
+  const issues = (data.issues ?? []).map((issue) => ({
+    key: issue.key,
+    summary: issue.fields?.summary ?? '(no summary)',
+    status: issue.fields?.status?.name ?? 'Unknown',
+    updated: issue.fields?.updated,
+    url: `${auth.baseUrl}/browse/${issue.key}`,
+  }));
+
+  return {
+    requestedStatus: normalizedStatus,
+    issues,
+  };
+}
+
+export function formatJiraStatusListReply(result: JiraStatusListResult): string {
+  if (result.issues.length === 0) {
+    return `No Jira tickets found for status "${result.requestedStatus}" in project scope.`;
+  }
+
+  const lines = result.issues.map((issue) => `${issue.key} [${issue.status}] - ${issue.summary}`);
+  return [
+    `Found ${result.issues.length} ticket(s) for status "${result.requestedStatus}":`,
+    ...lines,
+  ].join('\n');
 }
 
 export function formatJiraCheckReply(outcome: JiraCheckOutcome): string {

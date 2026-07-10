@@ -18,7 +18,7 @@ import {
 } from './adminDb';
 import { generateAgentChatReply } from './chat';
 import { listLogs, listRuns } from './db';
-import { checkJiraIssueStatus, formatJiraCheckReply, type JiraToolAuth } from './tools/jira';
+import { checkJiraIssueStatus, formatJiraCheckReply, formatJiraStatusListReply, listJiraIssuesByStatus, type JiraToolAuth } from './tools/jira';
 import type { TelegramUpdate } from './telegram';
 import { sendTelegramMessage } from './telegram';
 import { runWeeklyReview } from './agentService';
@@ -99,7 +99,7 @@ interface JiraCheckCommand {
 
 function parseJiraCheckCommand(message: string): JiraCheckCommand {
   const trimmed = message.trim();
-  const match = trimmed.match(/^\/jiracheck(?:@\w+)?(?:\s+(.*))?$/i);
+  const match = trimmed.match(/^\/jirr?acheck(?:@\w+)?(?:\s+(.*))?$/i);
   if (!match) {
     return { isCommand: false };
   }
@@ -112,8 +112,32 @@ function parseJiraCheckCommand(message: string): JiraCheckCommand {
   return { isCommand: true, query };
 }
 
+interface JiraStatusCommand {
+  isCommand: boolean;
+  status?: string;
+}
+
+function parseJiraStatusCommand(message: string): JiraStatusCommand {
+  const trimmed = message.trim();
+  const match = trimmed.match(/^\/jirr?acheck(?:@\w+)?\s+status(?:\s+(.*))?$/i);
+  if (!match) {
+    return { isCommand: false };
+  }
+
+  const status = (match[1] ?? '').trim();
+  if (!status) {
+    return { isCommand: true };
+  }
+
+  return { isCommand: true, status };
+}
+
 function jiraUsageMessage(): string {
   return 'Usage: /jiracheck <ticket key or short description>\nExamples: /jiracheck BC-123 or /jiracheck login flow error';
+}
+
+function jiraStatusUsageMessage(): string {
+  return 'Usage: /jirracheck status <status>\nExample: /jirracheck status open';
 }
 
 function parseCommandName(message: string): string | undefined {
@@ -127,6 +151,7 @@ function helpMessage(): string {
     '/help - show this command list',
     '/start - show this command list',
     '/jiracheck <ticket key or short description> - check Jira status',
+    '/jirracheck status <status> - list tickets by status (example: open)',
     'You can also send a Jira key like BC-123 in plain text.',
   ].join('\n');
 }
@@ -160,6 +185,41 @@ async function buildJiraCheckResponse(env: AdminServiceEnv, query: string): Prom
           },
     },
   };
+}
+
+async function buildJiraStatusListResponse(env: AdminServiceEnv, status: string): Promise<{ response: string; metadata: Record<string, unknown> }> {
+  const jiraAuth = buildJiraAuth(env);
+  if (!jiraAuth) {
+    return {
+      response: 'Jira is not configured yet. Set ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN, and JIRA_PROJECT_KEY.',
+      metadata: { configured: false, status },
+    };
+  }
+
+  try {
+    const result = await listJiraIssuesByStatus(jiraAuth, status, 10);
+    return {
+      response: formatJiraStatusListReply(result),
+      metadata: {
+        configured: true,
+        command: '/jirracheck status',
+        status,
+        count: result.issues.length,
+        keys: result.issues.map((issue) => issue.key),
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown Jira error';
+    return {
+      response: `Jira status listing failed (${message}). Verify Jira auth and status value, then try again.`,
+      metadata: {
+        configured: true,
+        command: '/jirracheck status',
+        status,
+        error: message,
+      },
+    };
+  }
 }
 
 export async function handleAdminRoutes(request: Request, env: AdminServiceEnv): Promise<Response | null> {
@@ -325,6 +385,32 @@ export async function handleAdminRoutes(request: Request, env: AdminServiceEnv):
       return json({ ok: true, response: responseText, command: commandName, messages });
     }
 
+    const jiraStatusCommand = parseJiraStatusCommand(message);
+    if (jiraStatusCommand.isCommand) {
+      const responsePayload = jiraStatusCommand.status
+        ? await buildJiraStatusListResponse(env, jiraStatusCommand.status)
+        : { response: jiraStatusUsageMessage(), metadata: { command: '/jirracheck status', missingStatus: true } };
+      const responseText = responsePayload.response;
+
+      await insertAdminChatMessage(env.ADMIN_DB, {
+        channel: 'web',
+        actorEmail: auth.email,
+        message,
+        response: responseText,
+      });
+
+      await insertAdminAuditLog(env.ADMIN_DB, {
+        actorEmail: auth.email,
+        action: 'admin.jiracheck.status.sent',
+        targetType: 'jira_issues',
+        targetId: 'jiracheck-status',
+        metadataJson: JSON.stringify(responsePayload.metadata),
+      });
+
+      const messages = await listAdminChatMessages(env.ADMIN_DB, 50);
+      return json({ ok: true, response: responseText, jira: responsePayload.metadata, messages });
+    }
+
     const jiraCommand = parseJiraCheckCommand(message);
     const inferredJiraQuery = jiraCommand.isCommand ? jiraCommand.query : extractJiraKeyFromText(message);
     if (jiraCommand.isCommand || inferredJiraQuery) {
@@ -430,9 +516,15 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
   }
 
   const jiraCommand = parseJiraCheckCommand(messageText);
+  const jiraStatusCommand = parseJiraStatusCommand(messageText);
   const commandName = parseCommandName(messageText);
   const helpPayload = commandName === 'help' || commandName === 'start'
     ? { response: helpMessage(), metadata: { command: `/${commandName}`, trigger: 'command' } }
+    : null;
+  const jiraStatusResponsePayload = jiraStatusCommand.isCommand
+    ? (jiraStatusCommand.status
+        ? await buildJiraStatusListResponse(env, jiraStatusCommand.status)
+        : { response: jiraStatusUsageMessage(), metadata: { command: '/jirracheck status', missingStatus: true } })
     : null;
   const inferredJiraQuery = jiraCommand.isCommand ? jiraCommand.query : extractJiraKeyFromText(messageText);
   const jiraResponsePayload = jiraCommand.isCommand || inferredJiraQuery
@@ -442,7 +534,7 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
           ? await buildJiraCheckResponse(env, jiraCommand.query)
           : { response: jiraUsageMessage(), metadata: { command: '/jiracheck', missingQuery: true } })
     : null;
-  const responsePayload = helpPayload ?? jiraResponsePayload;
+  const responsePayload = helpPayload ?? jiraStatusResponsePayload ?? jiraResponsePayload;
   const replyText = responsePayload?.response ?? generateAgentChatReply(messageText).response;
 
   await insertAdminChatMessage(env.ADMIN_DB, {
@@ -460,6 +552,11 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     metadataJson: JSON.stringify(
       helpPayload
         ? helpPayload.metadata
+        : jiraStatusResponsePayload
+          ? {
+              ...jiraStatusResponsePayload.metadata,
+              trigger: 'command',
+            }
         : jiraResponsePayload
           ? {
               ...jiraResponsePayload.metadata,
