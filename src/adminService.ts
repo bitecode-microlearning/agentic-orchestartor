@@ -92,14 +92,48 @@ function buildJiraAuth(env: AdminServiceEnv): JiraToolAuth | null {
   };
 }
 
-function parseJiraCheckQuery(message: string): string | undefined {
+interface JiraCheckCommand {
+  isCommand: boolean;
+  query?: string;
+}
+
+function parseJiraCheckCommand(message: string): JiraCheckCommand {
   const trimmed = message.trim();
-  if (!trimmed.toLowerCase().startsWith('/jiracheck')) {
-    return undefined;
+  const match = trimmed.match(/^\/jiracheck(?:@\w+)?(?:\s+(.*))?$/i);
+  if (!match) {
+    return { isCommand: false };
   }
 
-  const rest = trimmed.slice('/jiracheck'.length).trim();
-  return rest || undefined;
+  const query = (match[1] ?? '').trim();
+  if (!query) {
+    return { isCommand: true };
+  }
+
+  return { isCommand: true, query };
+}
+
+function jiraUsageMessage(): string {
+  return 'Usage: /jiracheck <ticket key or short description>\nExamples: /jiracheck BC-123 or /jiracheck login flow error';
+}
+
+function parseCommandName(message: string): string | undefined {
+  const match = message.trim().match(/^\/(\w+)(?:@\w+)?(?:\s+.*)?$/i);
+  return match?.[1]?.toLowerCase();
+}
+
+function helpMessage(): string {
+  return [
+    'Available commands:',
+    '/help - show this command list',
+    '/start - show this command list',
+    '/jiracheck <ticket key or short description> - check Jira status',
+    'You can also send a Jira key like BC-123 in plain text.',
+  ].join('\n');
+}
+
+function extractJiraKeyFromText(message: string): string | undefined {
+  const match = message.match(/\b[A-Z][A-Z0-9]+-\d+\b/);
+  return match?.[0];
 }
 
 async function buildJiraCheckResponse(env: AdminServiceEnv, query: string): Promise<{ response: string; metadata: Record<string, unknown> }> {
@@ -268,9 +302,38 @@ export async function handleAdminRoutes(request: Request, env: AdminServiceEnv):
       return json({ ok: false, error: 'message is required' }, 400);
     }
 
-    const jiraQuery = parseJiraCheckQuery(message);
-    if (jiraQuery !== undefined) {
-      const { response: responseText, metadata } = await buildJiraCheckResponse(env, jiraQuery);
+    const commandName = parseCommandName(message);
+    if (commandName === 'help' || commandName === 'start') {
+      const responseText = helpMessage();
+
+      await insertAdminChatMessage(env.ADMIN_DB, {
+        channel: 'web',
+        actorEmail: auth.email,
+        message,
+        response: responseText,
+      });
+
+      await insertAdminAuditLog(env.ADMIN_DB, {
+        actorEmail: auth.email,
+        action: 'admin.help.sent',
+        targetType: 'admin_chat_messages',
+        targetId: undefined,
+        metadataJson: JSON.stringify({ command: commandName }),
+      });
+
+      const messages = await listAdminChatMessages(env.ADMIN_DB, 50);
+      return json({ ok: true, response: responseText, command: commandName, messages });
+    }
+
+    const jiraCommand = parseJiraCheckCommand(message);
+    const inferredJiraQuery = jiraCommand.isCommand ? jiraCommand.query : extractJiraKeyFromText(message);
+    if (jiraCommand.isCommand || inferredJiraQuery) {
+      const responsePayload = inferredJiraQuery
+        ? await buildJiraCheckResponse(env, inferredJiraQuery)
+        : jiraCommand.query
+        ? await buildJiraCheckResponse(env, jiraCommand.query)
+        : { response: jiraUsageMessage(), metadata: { command: '/jiracheck', missingQuery: true } };
+      const responseText = responsePayload.response;
 
       await insertAdminChatMessage(env.ADMIN_DB, {
         channel: 'web',
@@ -284,11 +347,14 @@ export async function handleAdminRoutes(request: Request, env: AdminServiceEnv):
         action: 'admin.jiracheck.sent',
         targetType: 'jira_issues',
         targetId: 'jiracheck',
-        metadataJson: JSON.stringify(metadata),
+        metadataJson: JSON.stringify({
+          ...responsePayload.metadata,
+          trigger: jiraCommand.isCommand ? 'command' : 'auto-key-detect',
+        }),
       });
 
       const messages = await listAdminChatMessages(env.ADMIN_DB, 50);
-      return json({ ok: true, response: responseText, jira: metadata, messages });
+      return json({ ok: true, response: responseText, jira: responsePayload.metadata, messages });
     }
 
     const reply = generateAgentChatReply(message);
@@ -363,10 +429,21 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     return json({ ok: false, error: 'Chat ID not allowed' }, 403);
   }
 
-  const jiraQuery = parseJiraCheckQuery(messageText);
-  const replyText = jiraQuery !== undefined
-    ? (await buildJiraCheckResponse(env, jiraQuery)).response
-    : generateAgentChatReply(messageText).response;
+  const jiraCommand = parseJiraCheckCommand(messageText);
+  const commandName = parseCommandName(messageText);
+  const helpPayload = commandName === 'help' || commandName === 'start'
+    ? { response: helpMessage(), metadata: { command: `/${commandName}`, trigger: 'command' } }
+    : null;
+  const inferredJiraQuery = jiraCommand.isCommand ? jiraCommand.query : extractJiraKeyFromText(messageText);
+  const jiraResponsePayload = jiraCommand.isCommand || inferredJiraQuery
+    ? (inferredJiraQuery
+        ? await buildJiraCheckResponse(env, inferredJiraQuery)
+        : jiraCommand.query
+          ? await buildJiraCheckResponse(env, jiraCommand.query)
+          : { response: jiraUsageMessage(), metadata: { command: '/jiracheck', missingQuery: true } })
+    : null;
+  const responsePayload = helpPayload ?? jiraResponsePayload;
+  const replyText = responsePayload?.response ?? generateAgentChatReply(messageText).response;
 
   await insertAdminChatMessage(env.ADMIN_DB, {
     channel: 'telegram',
@@ -380,7 +457,16 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     action: 'telegram.chat.received',
     targetType: 'admin_chat_messages',
     targetId: createRequestId('telegram-chat-event'),
-    metadataJson: JSON.stringify({ command: jiraQuery ? '/jiracheck' : null }),
+    metadataJson: JSON.stringify(
+      helpPayload
+        ? helpPayload.metadata
+        : jiraResponsePayload
+          ? {
+              ...jiraResponsePayload.metadata,
+              trigger: jiraCommand.isCommand ? 'command' : 'auto-key-detect',
+            }
+          : { command: null },
+    ),
   });
 
   if (env.TELEGRAM_BOT_TOKEN) {

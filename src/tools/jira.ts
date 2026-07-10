@@ -124,19 +124,27 @@ function buildAuthHeader(email: string, apiToken: string): string {
   return `Basic ${toBase64(`${email}:${apiToken}`)}`;
 }
 
-async function fetchJson<T>(url: string, auth: JiraToolAuth): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      authorization: buildAuthHeader(auth.email, auth.apiToken),
-      accept: 'application/json',
-    },
-  });
+async function fetchJson<T>(url: string, auth: JiraToolAuth, timeoutMs = 8000): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  if (!response.ok) {
-    throw new Error(`Jira request failed with ${response.status}`);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        authorization: buildAuthHeader(auth.email, auth.apiToken),
+        accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Jira request failed with ${response.status}`);
+    }
+
+    return (await response.json()) as T;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return (await response.json()) as T;
 }
 
 async function fetchConfluenceSnippet(auth: JiraToolAuth, pageUrl: string): Promise<string | undefined> {
@@ -146,7 +154,7 @@ async function fetchConfluenceSnippet(auth: JiraToolAuth, pageUrl: string): Prom
   }
 
   const contentUrl = `${auth.baseUrl}/wiki/rest/api/content/${pageId}?expand=title,version,body.storage`;
-  const data = await fetchJson<{ title?: string; body?: { storage?: { value?: string } } }>(contentUrl, auth);
+  const data = await fetchJson<{ title?: string; body?: { storage?: { value?: string } } }>(contentUrl, auth, 6000);
   const storage = data.body?.storage?.value ?? '';
   const snippet = storage.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
   const title = data.title?.trim();
@@ -169,7 +177,7 @@ async function getIssueDetails(auth: JiraToolAuth, key: string): Promise<JiraIss
       description?: unknown;
       comment?: { comments?: Array<{ body?: unknown }> };
     };
-  }>(issueUrl, auth);
+  }>(issueUrl, auth, 8000);
 
   const summary = issue.fields?.summary ?? '';
   const status = issue.fields?.status?.name ?? 'Unknown';
@@ -217,7 +225,7 @@ async function searchIssues(auth: JiraToolAuth, query: string): Promise<Array<Ji
         comment?: { comments?: Array<{ body?: unknown }> };
       };
     }>;
-  }>(searchUrl, auth);
+  }>(searchUrl, auth, 8000);
 
   const candidates = data.issues ?? [];
   const scored = await Promise.all(
@@ -289,23 +297,31 @@ export async function checkJiraIssueStatus(auth: JiraToolAuth, query: string): P
   }
 
   const normalized = query.trim();
-  if (JiraIssueKeySchema.safeParse(normalized).success) {
-    const issue = await getIssueDetails(auth, normalized);
-    return summarizeJiraIssue(issue, 1);
-  }
+  try {
+    if (JiraIssueKeySchema.safeParse(normalized).success) {
+      const issue = await getIssueDetails(auth, normalized);
+      return summarizeJiraIssue(issue, 1);
+    }
 
-  const issues = await searchIssues(auth, normalized);
-  if (issues.length === 0) {
-    return { needsInput: true, prompt: `I could not find a close Jira match for "${normalized}". Try a ticket key or a more specific task description.` };
-  }
+    const issues = await searchIssues(auth, normalized);
+    if (issues.length === 0) {
+      return { needsInput: true, prompt: `I could not find a close Jira match for "${normalized}". Try a ticket key or a more specific task description.` };
+    }
 
-  const [bestMatch, secondMatch] = issues;
-  const confidence = Math.min(0.98, Math.max(0.25, scoreSimilarity(normalized, `${bestMatch.key} ${bestMatch.summary} ${bestMatch.description ?? ''}`)));
-  if (confidence < 0.28 && secondMatch) {
-    return { needsInput: true, prompt: `I found ${bestMatch.key} but it is a weak match. Try the ticket key or refine the description.` };
-  }
+    const [bestMatch, secondMatch] = issues;
+    const confidence = Math.min(0.98, Math.max(0.25, scoreSimilarity(normalized, `${bestMatch.key} ${bestMatch.summary} ${bestMatch.description ?? ''}`)));
+    if (confidence < 0.28 && secondMatch) {
+      return { needsInput: true, prompt: `I found ${bestMatch.key} but it is a weak match. Try the ticket key or refine the description.` };
+    }
 
-  return summarizeJiraIssue(bestMatch, confidence);
+    return summarizeJiraIssue(bestMatch, confidence);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown Jira error';
+    return {
+      needsInput: true,
+      prompt: `Jira lookup failed or timed out (${message}). Try the ticket key again, or verify the Atlassian connection.`,
+    };
+  }
 }
 
 export function formatJiraCheckReply(outcome: JiraCheckOutcome): string {
