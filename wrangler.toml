@@ -37,7 +37,7 @@ ALLOWED_GOOGLE_DOMAIN = "gmail.com"
 ADMIN_EMAIL_ALLOWLIST = ""
 ATLASSIAN_BASE_URL = "https://bitecode.atlassian.net"
 ATLASSIAN_EMAIL = "jira-service-account@your-domain.com"
-JIRA_PROJECT_KEY = "BC"
+JIRA_PROJECT_KEY = "BBD"
 TELEGRAM_ADMIN_CHAT_IDS = ""
 
 [[env.production.d1_databases]]

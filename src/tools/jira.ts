@@ -147,6 +147,39 @@ async function fetchJson<T>(url: string, auth: JiraToolAuth, timeoutMs = 8000): 
   }
 }
 
+interface JiraSearchResultIssue {
+  key: string;
+  fields?: {
+    summary?: string;
+    status?: { name?: string };
+    updated?: string;
+    description?: unknown;
+    comment?: { comments?: Array<{ body?: unknown }> };
+  };
+}
+
+function buildIssueDetailsFromSearchResult(auth: JiraToolAuth, issue: JiraSearchResultIssue): JiraIssueDetails {
+  const summary = issue.fields?.summary ?? '';
+  const status = issue.fields?.status?.name ?? 'Unknown';
+  const updated = issue.fields?.updated;
+  const descriptionText = typeof issue.fields?.description === 'string' ? issue.fields.description : JSON.stringify(issue.fields?.description ?? '');
+  const comments = (issue.fields?.comment?.comments ?? [])
+    .map((comment) => (typeof comment.body === 'string' ? comment.body : JSON.stringify(comment.body ?? '')))
+    .filter(Boolean);
+
+  return {
+    key: issue.key,
+    summary,
+    status,
+    updated,
+    description: descriptionText,
+    commentCount: comments.length,
+    comments,
+    confluenceNotes: [],
+    url: `${auth.baseUrl}/browse/${issue.key}`,
+  };
+}
+
 async function fetchConfluenceSnippet(auth: JiraToolAuth, pageUrl: string): Promise<string | undefined> {
   const pageId = extractConfluencePageId(pageUrl);
   if (!pageId) {
@@ -168,96 +201,101 @@ async function fetchConfluenceSnippet(auth: JiraToolAuth, pageUrl: string): Prom
 
 async function getIssueDetails(auth: JiraToolAuth, key: string): Promise<JiraIssueDetails> {
   const issueUrl = `${auth.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,status,updated,description,comment`;
-  const issue = await fetchJson<{
-    key: string;
-    fields?: {
-      summary?: string;
-      status?: { name?: string };
-      updated?: string;
-      description?: unknown;
-      comment?: { comments?: Array<{ body?: unknown }> };
-    };
-  }>(issueUrl, auth, 8000);
+  try {
+    const issue = await fetchJson<JiraSearchResultIssue>(issueUrl, auth, 8000);
+    const details = buildIssueDetailsFromSearchResult(auth, issue);
+    const confluenceNotes: string[] = [];
+    const maybeLinks = [details.description ?? '', ...details.comments].flatMap((text) => text.match(/https?:\/\/[^\s)\]]+/gi) ?? []);
 
-  const summary = issue.fields?.summary ?? '';
-  const status = issue.fields?.status?.name ?? 'Unknown';
-  const updated = issue.fields?.updated;
-  const descriptionText = typeof issue.fields?.description === 'string' ? issue.fields.description : JSON.stringify(issue.fields?.description ?? '');
-  const comments = (issue.fields?.comment?.comments ?? []).map((comment) => (typeof comment.body === 'string' ? comment.body : JSON.stringify(comment.body ?? ''))).filter(Boolean);
+    for (const link of maybeLinks) {
+      if (!link.includes('atlassian.net/wiki')) {
+        continue;
+      }
 
-  const confluenceNotes: string[] = [];
-  const maybeLinks = [descriptionText, ...comments].flatMap((text) => text.match(/https?:\/\/[^\s)\]]+/gi) ?? []);
-  for (const link of maybeLinks) {
-    if (link.includes('atlassian.net/wiki')) {
-      const snippet = await fetchConfluenceSnippet(auth, link);
-      if (snippet) {
-        confluenceNotes.push(snippet);
+      try {
+        const snippet = await fetchConfluenceSnippet(auth, link);
+        if (snippet) {
+          confluenceNotes.push(snippet);
+        }
+      } catch {
+        continue;
       }
     }
-  }
 
-  return {
-    key: issue.key,
-    summary,
-    status,
-    updated,
-    description: descriptionText,
-    commentCount: comments.length,
-    comments,
-    confluenceNotes,
-    url: `${auth.baseUrl}/browse/${issue.key}`,
-  };
+    return {
+      ...details,
+      confluenceNotes,
+    };
+  } catch (error) {
+    const searchUrl = `${auth.baseUrl}/rest/api/3/search/jql?jql=${encodeURIComponent(`key = ${key}`)}&maxResults=1&fields=summary,status,updated,description,comment`;
+    const searchResult = await fetchJson<{ issues?: JiraSearchResultIssue[] }>(searchUrl, auth, 8000);
+    const issue = searchResult.issues?.[0];
+
+    if (!issue) {
+      throw error;
+    }
+
+    const details = buildIssueDetailsFromSearchResult(auth, issue);
+    const confluenceNotes: string[] = [];
+    const maybeLinks = [details.description ?? '', ...details.comments].flatMap((text) => text.match(/https?:\/\/[^\s)\]]+/gi) ?? []);
+
+    for (const link of maybeLinks) {
+      if (!link.includes('atlassian.net/wiki')) {
+        continue;
+      }
+
+      try {
+        const snippet = await fetchConfluenceSnippet(auth, link);
+        if (snippet) {
+          confluenceNotes.push(snippet);
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return {
+      ...details,
+      confluenceNotes,
+    };
+  }
 }
 
 async function searchIssues(auth: JiraToolAuth, query: string): Promise<Array<JiraIssueDetails & { score: number }>> {
   const parsed = JiraSearchInputSchema.parse({ query, projectKey: auth.projectKey });
   const compactQuery = normalizeText(parsed.query).split(' ').slice(0, 5).join(' ');
   const jql = `project = ${parsed.projectKey} ORDER BY updated DESC`;
-  const searchUrl = `${auth.baseUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=20&fields=summary,status,updated,description,comment`;
+  const searchUrl = `${auth.baseUrl}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&maxResults=20&fields=summary,status,updated,description,comment`;
   const data = await fetchJson<{
-    issues?: Array<{
-      key: string;
-      fields?: {
-        summary?: string;
-        status?: { name?: string };
-        updated?: string;
-        description?: unknown;
-        comment?: { comments?: Array<{ body?: unknown }> };
-      };
-    }>;
+    issues?: JiraSearchResultIssue[];
   }>(searchUrl, auth, 8000);
 
   const candidates = data.issues ?? [];
   const scored = await Promise.all(
     candidates.map(async (issue) => {
-      const summary = issue.fields?.summary ?? '';
-      const status = issue.fields?.status?.name ?? 'Unknown';
-      const updated = issue.fields?.updated;
-      const descriptionText = typeof issue.fields?.description === 'string' ? issue.fields.description : JSON.stringify(issue.fields?.description ?? '');
-      const comments = (issue.fields?.comment?.comments ?? []).map((comment) => (typeof comment.body === 'string' ? comment.body : JSON.stringify(comment.body ?? ''))).filter(Boolean);
-      const composite = `${issue.key} ${summary} ${descriptionText} ${comments.join(' ')}`;
+      const details = buildIssueDetailsFromSearchResult(auth, issue);
+      const composite = `${details.key} ${details.summary} ${details.description ?? ''} ${details.comments.join(' ')}`;
       const score = scoreSimilarity(compactQuery, composite);
       const confluenceNotes: string[] = [];
-      const maybeLinks = [descriptionText, ...comments].flatMap((text) => text.match(/https?:\/\/[^\s)\]]+/gi) ?? []);
+      const maybeLinks = [details.description ?? '', ...details.comments].flatMap((text) => text.match(/https?:\/\/[^\s)\]]+/gi) ?? []);
       for (const link of maybeLinks) {
-        if (link.includes('atlassian.net/wiki')) {
+        if (!link.includes('atlassian.net/wiki')) {
+          continue;
+        }
+
+        try {
           const snippet = await fetchConfluenceSnippet(auth, link);
           if (snippet) {
             confluenceNotes.push(snippet);
           }
+        } catch {
+          continue;
         }
       }
 
       return {
-        key: issue.key,
-        summary,
-        status,
-        updated,
-        description: descriptionText,
-        commentCount: comments.length,
-        comments,
+        ...details,
         confluenceNotes,
-        url: `${auth.baseUrl}/browse/${issue.key}`,
         score,
       };
     }),
