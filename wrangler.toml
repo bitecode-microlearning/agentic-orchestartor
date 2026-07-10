@@ -25,7 +25,7 @@ database_id = "cdc915cf-4286-459a-bff3-af61d628c7b0"
 [[d1_databases]]
 binding = "ADMIN_DB"
 database_name = "bitecode-admin-prod"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "e4e52e31-44c1-4b83-b783-cf7d6cde4b88"
 
 [[r2_buckets]]
 binding = "AI_AUDIT_BUCKET"
