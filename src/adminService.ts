@@ -499,7 +499,6 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     if (processed) {
       return json({ ok: true, ignored: true, reason: 'Duplicate update ignored' });
     }
-    await markTelegramUpdateProcessed(env.ADMIN_DB, updateId, String(chatId), messageId);
   }
 
   const allowedChatIds = parseAllowedTelegramChatIds(env.TELEGRAM_ADMIN_CHAT_IDS);
@@ -541,7 +540,7 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     channel: 'telegram',
     actorEmail: `telegram:${chatId}`,
     message: messageText,
-      response: replyText,
+    response: replyText,
   });
 
   await insertAdminAuditLog(env.ADMIN_DB, {
@@ -566,8 +565,34 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     ),
   });
 
-  if (env.TELEGRAM_BOT_TOKEN) {
-    await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, replyText);
+  if (!env.TELEGRAM_BOT_TOKEN) {
+    await insertAdminAuditLog(env.ADMIN_DB, {
+      actorEmail: `telegram:${chatId}`,
+      action: 'telegram.send.failed',
+      targetType: 'telegram_chat',
+      targetId: String(chatId),
+      metadataJson: JSON.stringify({ reason: 'TELEGRAM_BOT_TOKEN is not configured' }),
+    });
+
+    return json({ ok: false, error: 'Telegram bot token is not configured; reply was not sent.' }, 500);
+  }
+
+  const telegramResponse = await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, chatId, replyText);
+  if (!telegramResponse.ok) {
+    const errorText = await telegramResponse.text().catch(() => 'Unable to read Telegram error response');
+    await insertAdminAuditLog(env.ADMIN_DB, {
+      actorEmail: `telegram:${chatId}`,
+      action: 'telegram.send.failed',
+      targetType: 'telegram_chat',
+      targetId: String(chatId),
+      metadataJson: JSON.stringify({ status: telegramResponse.status, error: errorText.slice(0, 500) }),
+    });
+
+    return json({ ok: false, error: 'Telegram reply failed to send.' }, 502);
+  }
+
+  if (typeof updateId === 'number') {
+    await markTelegramUpdateProcessed(env.ADMIN_DB, updateId, String(chatId), messageId);
   }
 
   return json({ ok: true });
