@@ -137,7 +137,7 @@ function jiraUsageMessage(): string {
 }
 
 function jiraStatusUsageMessage(): string {
-  return 'Usage: /jirracheck status <status>\nExample: /jirracheck status open';
+  return 'Usage: /jiracheck status <status>\nExample: /jiracheck status open';
 }
 
 function parseCommandName(message: string): string | undefined {
@@ -151,7 +151,7 @@ function helpMessage(): string {
     '/help - show this command list',
     '/start - show this command list',
     '/jiracheck <ticket key or short description> - check Jira status',
-    '/jirracheck status <status> - list tickets by status (example: open)',
+    '/jiracheck status <status> - list tickets by status (example: open)',
     'You can also send a Jira key like BC-123 in plain text.',
   ].join('\n');
 }
@@ -202,7 +202,7 @@ async function buildJiraStatusListResponse(env: AdminServiceEnv, status: string)
       response: formatJiraStatusListReply(result),
       metadata: {
         configured: true,
-        command: '/jirracheck status',
+        command: '/jiracheck status',
         status,
         count: result.issues.length,
         keys: result.issues.map((issue) => issue.key),
@@ -214,7 +214,7 @@ async function buildJiraStatusListResponse(env: AdminServiceEnv, status: string)
       response: `Jira status listing failed (${message}). Verify Jira auth and status value, then try again.`,
       metadata: {
         configured: true,
-        command: '/jirracheck status',
+        command: '/jiracheck status',
         status,
         error: message,
       },
@@ -389,7 +389,7 @@ export async function handleAdminRoutes(request: Request, env: AdminServiceEnv):
     if (jiraStatusCommand.isCommand) {
       const responsePayload = jiraStatusCommand.status
         ? await buildJiraStatusListResponse(env, jiraStatusCommand.status)
-        : { response: jiraStatusUsageMessage(), metadata: { command: '/jirracheck status', missingStatus: true } };
+        : { response: jiraStatusUsageMessage(), metadata: { command: '/jiracheck status', missingStatus: true } };
       const responseText = responsePayload.response;
 
       await insertAdminChatMessage(env.ADMIN_DB, {
@@ -515,19 +515,19 @@ export async function handleTelegramAdminWebhook(request: Request, env: AdminSer
     return json({ ok: false, error: 'Chat ID not allowed' }, 403);
   }
 
-  const jiraCommand = parseJiraCheckCommand(messageText);
-  const jiraStatusCommand = parseJiraStatusCommand(messageText);
   const commandName = parseCommandName(messageText);
   const helpPayload = commandName === 'help' || commandName === 'start'
     ? { response: helpMessage(), metadata: { command: `/${commandName}`, trigger: 'command' } }
     : null;
-  const jiraStatusResponsePayload = jiraStatusCommand.isCommand
+  const jiraStatusCommand = helpPayload ? { isCommand: false } : parseJiraStatusCommand(messageText);
+  const jiraStatusResponsePayload = !helpPayload && jiraStatusCommand.isCommand
     ? (jiraStatusCommand.status
         ? await buildJiraStatusListResponse(env, jiraStatusCommand.status)
-        : { response: jiraStatusUsageMessage(), metadata: { command: '/jirracheck status', missingStatus: true } })
+        : { response: jiraStatusUsageMessage(), metadata: { command: '/jiracheck status', missingStatus: true } })
     : null;
+  const jiraCommand = helpPayload || jiraStatusResponsePayload ? { isCommand: false } : parseJiraCheckCommand(messageText);
   const inferredJiraQuery = jiraCommand.isCommand ? jiraCommand.query : extractJiraKeyFromText(messageText);
-  const jiraResponsePayload = jiraCommand.isCommand || inferredJiraQuery
+  const jiraResponsePayload = !helpPayload && !jiraStatusResponsePayload && (jiraCommand.isCommand || inferredJiraQuery)
     ? (inferredJiraQuery
         ? await buildJiraCheckResponse(env, inferredJiraQuery)
         : jiraCommand.query
