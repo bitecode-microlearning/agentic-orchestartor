@@ -42,6 +42,9 @@ Set sensitive values as Worker secrets (not plain vars):
 - npx.cmd wrangler secret put TELEGRAM_BOT_TOKEN --env production
 - npx.cmd wrangler secret put TELEGRAM_WEBHOOK_SECRET --env production
 
+## Deployment verification
+- This README-only change can be used to open a lightweight PR and verify the automatic Cloudflare deployment pipeline.
+
 ## Admin website
 - Admin UI path: /admin
 - Identity API: /api/admin/v1/me

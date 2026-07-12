@@ -21,7 +21,10 @@ export function evaluateSafetyPolicy(
 
 export function sanitizeAuditEvent(event: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(event).map(([key, value]) => [key, typeof value === 'string' ? redactString(value) : value]),
+    Object.entries(event).map(([key, value]) => [
+      key,
+      shouldRedact(key) ? '[redacted]' : typeof value === 'string' ? redactString(value) : value,
+    ]),
   );
 }
 
