@@ -1,122 +1,66 @@
 # BiteCode Agentic Orchestrator
 
-This repository contains a safe, Cloudflare-native scaffold for an agentic orchestration layer for BiteCode.
+Cloudflare Worker for the BiteCode Operations Agent MVP. It preserves the existing admin, Telegram, Jira, and Confluence capabilities and adds a persistent operations agent that detects recurring health failures, groups them into incidents, sends Telegram notifications, and creates Jira issues only after approval.
 
-## What this repo is
-- A worker-based orchestrator for weekly reviews, approvals, and documentation tasks.
-- A place to host future specialist agents without destructive automation.
+## Architecture summary
 
-## What this repo is not
-- Not the website frontend.
-- Not a production database writer.
-- Not a social publishing system.
+- Worker endpoints: `/telegram/webhook`, `/health`, `/internal/status`, `/internal/run-health-check`, `/internal/tasks`, `/internal/incidents`, `/internal/incidents/:id`, and approval endpoints.
+- D1 `AGENT_DB`: persistent tasks, observations, incidents, approvals, runtime state, and audit metadata.
+- R2 `AI_AUDIT_BUCKET`: immutable diagnosis audit payloads.
+- Cron: every 15 minutes, skipped when the agent is paused.
+- Jira: Atlassian REST API, idempotent by incident id label.
+- Telegram: authorized user allowlist plus webhook secret validation when Telegram sends the secret header.
 
-## Architecture overview
-- Worker entrypoint: src/index.ts
-- Admin backend services: src/admin-backend and src/adminService.ts
-- Admin web app: src/admin-webapp and src/adminWebApp.ts
-- Admin database schema: src/admin-db/schema.sql
-- Contracts and policies: src/contracts and src/policies
-- Tool wrappers: src/tools
-- Specialist agents: src/agents
-- Workflows: src/workflows
+## Local setup
 
-## Local development
-- npm install
-- npm run typecheck
-- npm test
-- npm run dev
+```bash
+npm install
+cp .dev.vars.example .dev.vars
+npm run typecheck
+npm test
+npm run dev
+```
 
-## Safe deployment commands
-All deploy scripts use `--keep-vars` to avoid overwriting dashboard-configured runtime values.
+## Required secrets and variables
 
-- npm run deploy
-- npm run deploy:dev
-- npm run deploy:prod
-- npm run deploy:keepsecrets
-- npm run deploy:dev:keepsecrets
-- npm run deploy:prod:keepsecrets
+Set secrets with `wrangler secret put` for real deployments:
 
-Set sensitive values as Worker secrets (not plain vars):
-- npx.cmd wrangler secret put AGENTIC_ADMIN_TOKEN --env production
-- npx.cmd wrangler secret put TELEGRAM_BOT_TOKEN --env production
-- npx.cmd wrangler secret put TELEGRAM_WEBHOOK_SECRET --env production
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_ALLOWED_USER_IDS`
+- `TELEGRAM_CHAT_ID`
+- `INTERNAL_STATUS_SECRET`
+- `ATLASSIAN_BASE_URL` or `JIRA_BASE_URL`
+- `ATLASSIAN_EMAIL` or `JIRA_USER_EMAIL`
+- `ATLASSIAN_API_TOKEN` or `JIRA_API_TOKEN`
+- `JIRA_PROJECT_KEY`
+- `AGENT_ENABLED`
+- `APPROVAL_EXPIRATION_MINUTES`
+- `INCIDENT_NOTIFICATION_THRESHOLDS`
+- `INCIDENT_REOPEN_COOLDOWN_MINUTES`
+- `HEALTH_CHECK_TIMEOUT_MS`
+- `AI_MODEL`
 
-## Deployment verification
-- This README-only change can be used to open a lightweight PR and verify the automatic Cloudflare deployment pipeline.
+## Database migration
 
-## Admin website
-- Admin UI path: /admin
-- Identity API: /api/admin/v1/me
-- Job list API: /api/admin/v1/jobs
-- Logs API: /api/admin/v1/logs
-- Admin users API: /api/admin/v1/users
-- Admin audit API: /api/admin/v1/audit
-- Admin commands API: /api/admin/v1/commands
-- Agent web chat API: /api/admin/v1/chat
-- Jira status command: /jiracheck <ticket key or task description>
+Apply `migrations/0001_ops_agent.sql` to `AGENT_DB` or let the Worker create compatible tables at startup.
 
-The admin routes require authentication. The implementation supports:
-- Cloudflare Access identity via cf-access-authenticated-user-email (preferred)
-- x-admin-token fallback for local and automation
+```bash
+wrangler d1 execute bitecode-agents-prod --file migrations/0001_ops_agent.sql
+```
 
-### Gmail-only authentication
-Configure Cloudflare Access in front of the worker and use Google as the identity provider.
-Set these vars in Wrangler:
-- ALLOWED_GOOGLE_DOMAIN=gmail.com
-- ADMIN_EMAIL_ALLOWLIST (optional comma-separated exact emails)
+## Telegram commands
 
-Only emails matching the allowed domain (and allowlist if set) can access /admin and /api/admin/*.
+`/status`, `/health`, `/tasks`, `/incidents`, `/incident <id>`, `/approve <approval-token>`, `/reject <approval-token>`, `/run-health-check`, `/pause-agent`, `/resume-agent`, `/help`.
 
-## Telegram chat integration
-Webhook endpoint:
-- /api/telegram/webhook/{TELEGRAM_WEBHOOK_SECRET}
+## Deployment
 
-Required secret/vars:
-- TELEGRAM_BOT_TOKEN (Wrangler secret)
-- TELEGRAM_WEBHOOK_SECRET (Wrangler var/secret)
-- TELEGRAM_ADMIN_CHAT_IDS (optional comma-separated chat ID allowlist)
+```bash
+npm run typecheck
+npm test
+wrangler deploy --keep-vars
+```
 
-Telegram updates are stored in ADMIN_DB chat logs and answered with a safe non-destructive placeholder agent response.
+## Known limitations
 
-### Jira status lookup
-The `/jiracheck` command looks for either:
-- A ticket key like `BITE-123`
-- A short free-text description like `cloudflare migration`
-
-It then ranks Jira issues by similarity, returns a one-sentence summary, the latest status, and one extra sentence from the latest comment or linked Confluence page when available.
-
-Set these Atlassian values for Jira lookups:
-- ATLASSIAN_BASE_URL
-- ATLASSIAN_EMAIL
-- ATLASSIAN_API_TOKEN
-- JIRA_PROJECT_KEY
-
-## Required resources
-- D1 database binding AGENT_DB
-- D1 database binding ADMIN_DB
-- R2 bucket binding AI_AUDIT_BUCKET
-- Optional queue binding SYSTEM_EVENTS_QUEUE
-
-## Safety model
-- The first MVP follows read -> analyze -> document -> create Jira ticket -> wait for approval.
-- Destructive actions require an approval request and are blocked by default.
-
-## Production notes
-- AGENT_DB is used only for agent workflow run records and logs.
-- ADMIN_DB is used for admin users, sessions, audit logs, admin commands, and admin chat messages.
-- Agent workflows do not write to ADMIN_DB.
-- The worker auto-creates required D1 tables if they are missing.
-- For production, prefer Wrangler secrets for AGENTIC_ADMIN_TOKEN and TELEGRAM_BOT_TOKEN.
-
-### Create and bind separate admin database
-Use Wrangler to create the admin control database and then update wrangler.toml with the returned database_id:
-
-- npx.cmd wrangler d1 create bitecode-admin-prod
-
-After creation, replace ADMIN_DB database_id placeholders in both default and production bindings.
-
-## Future roadmap
-- Phase 1: orchestrator, weekly review workflow, Jira/Confluence wrappers, D1 logging, R2 audit references
-- Phase 2: DeveloperAgent, GrowthAgent, LearningContentAgent, OperationsAgent, BillingAgent, AuditAgent
-- Phase 3: queue-driven workflows, real social imports, human approval UI, deeper Jira/Confluence automation
+The diagnostic source adapters are MVP placeholders except the Worker self-health signal. Cloudflare Workflows are documented as a future migration because the repository did not have Workflow bindings. AI diagnosis currently uses validated deterministic fallback unless an AI provider is wired behind the same schema boundary.

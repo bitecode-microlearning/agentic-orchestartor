@@ -427,3 +427,68 @@ export function formatJiraCheckReply(outcome: JiraCheckOutcome): string {
 
   return [outcome.summarySentence, outcome.statusSentence, outcome.contextSentence].join(' ');
 }
+
+export interface CreateJiraIssueInput extends JiraIssuePayload {
+  idempotencyKey: string;
+}
+
+export interface CreateJiraIssueResult {
+  key: string;
+  url: string;
+  idempotencyKey: string;
+}
+
+function toAdfDescription(text: string): unknown {
+  return {
+    type: 'doc',
+    version: 1,
+    content: [
+      {
+        type: 'paragraph',
+        content: [{ type: 'text', text: text.slice(0, 30000) }],
+      },
+    ],
+  };
+}
+
+export async function createJiraIssue(auth: JiraToolAuth, input: CreateJiraIssueInput): Promise<CreateJiraIssueResult> {
+  if (!auth.baseUrl || !auth.email || !auth.apiToken || !auth.projectKey) {
+    throw new Error('Missing Jira auth configuration');
+  }
+
+  const searchJql = `project = ${auth.projectKey} AND labels = "${escapeJqlValue(input.idempotencyKey)}" ORDER BY created DESC`;
+  const existing = await fetchJson<{ issues?: JiraSearchResultIssue[] }>(
+    `${auth.baseUrl}/rest/api/3/search/jql?jql=${encodeURIComponent(searchJql)}&maxResults=1&fields=summary,status`,
+    auth,
+    8000,
+  );
+  const existingIssue = existing.issues?.[0];
+  if (existingIssue?.key) {
+    return { key: existingIssue.key, url: `${auth.baseUrl}/browse/${existingIssue.key}`, idempotencyKey: input.idempotencyKey };
+  }
+
+  const response = await fetch(`${auth.baseUrl}/rest/api/3/issue`, {
+    method: 'POST',
+    headers: {
+      authorization: buildAuthHeader(auth.email, auth.apiToken),
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      fields: {
+        project: { key: auth.projectKey },
+        summary: input.title.slice(0, 255),
+        description: toAdfDescription(input.description),
+        issuetype: { name: 'Task' },
+        labels: [...new Set([...input.labels, input.idempotencyKey])],
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Jira issue creation failed with ${response.status}`);
+  }
+
+  const data = (await response.json()) as { key: string };
+  return { key: data.key, url: `${auth.baseUrl}/browse/${data.key}`, idempotencyKey: input.idempotencyKey };
+}
