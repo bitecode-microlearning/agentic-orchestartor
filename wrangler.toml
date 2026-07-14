@@ -1,4 +1,4 @@
-name = "bitecode-agentic-orchestrator"
+name = "bitecode-agentic-orchestrator-prod"
 main = "src/index.ts"
 compatibility_date = "2026-07-04"
 compatibility_flags = [ "nodejs_compat" ]
