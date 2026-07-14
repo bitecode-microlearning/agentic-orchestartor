@@ -23,8 +23,9 @@ npm run dev
 
 ## Required secrets and variables
 
-Set secrets with `wrangler secret put` for real deployments:
+Local development reads secrets from `.dev.vars`. Set production secrets with `wrangler secret put --env production` before deploying:
 
+- `AGENTIC_ADMIN_TOKEN`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
 - `TELEGRAM_ALLOWED_USER_IDS`
@@ -41,12 +42,22 @@ Set secrets with `wrangler secret put` for real deployments:
 - `HEALTH_CHECK_TIMEOUT_MS`
 - `AI_MODEL`
 
+Example:
+
+```bash
+wrangler secret put AGENTIC_ADMIN_TOKEN --env production
+wrangler secret put INTERNAL_STATUS_SECRET --env production
+wrangler secret put TELEGRAM_WEBHOOK_SECRET --env production
+wrangler secret put TELEGRAM_BOT_TOKEN --env production
+wrangler secret put ATLASSIAN_API_TOKEN --env production
+```
+
 ## Database migration
 
 Apply `migrations/0001_ops_agent.sql` to `AGENT_DB` or let the Worker create compatible tables at startup.
 
 ```bash
-wrangler d1 execute bitecode-agents-prod --file migrations/0001_ops_agent.sql
+wrangler d1 execute bitecode-agents-prod --remote --file migrations/0001_ops_agent.sql
 ```
 
 ## Telegram commands
@@ -58,8 +69,10 @@ wrangler d1 execute bitecode-agents-prod --file migrations/0001_ops_agent.sql
 ```bash
 npm run typecheck
 npm test
-wrangler deploy --keep-vars
+npm run deploy
 ```
+
+`npm run deploy` targets `env.production`. Use `npm run deploy:dev` only for the top-level development config.
 
 ## Known limitations
 

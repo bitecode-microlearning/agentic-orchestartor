@@ -7,12 +7,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "dev": "wrangler dev --local --port 8790",
-    "deploy": "wrangler deploy --keep-vars",
-    "deploy:dev": "wrangler deploy --env development --keep-vars",
-    "deploy:prod": "wrangler deploy --env production --keep-vars",
-    "deploy:keepsecrets": "wrangler deploy --keep-vars",
-    "deploy:dev:keepsecrets": "wrangler deploy --env development --keep-vars",
-    "deploy:prod:keepsecrets": "wrangler deploy --env production --keep-vars"
+    "deploy": "wrangler deploy --env production",
+    "deploy:dev": "wrangler deploy --env=",
+    "deploy:prod": "wrangler deploy --env production",
+    "deploy:keepsecrets": "wrangler deploy --env production",
+    "deploy:dev:keepsecrets": "wrangler deploy --env=",
+    "deploy:prod:keepsecrets": "wrangler deploy --env production"
   },
   "dependencies": {
     "zod": "^3.23.8"
